@@ -48,3 +48,12 @@ jobs:
             debug.png
             debug.html
           retention-days: 3
+
+      - name: Nahrát ověřovací screenshoty nalezených termínů
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nalezene-terminy
+          path: nalezeno_*.png
+          retention-days: 3
+          if-no-files-found: ignore

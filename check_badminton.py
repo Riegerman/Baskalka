@@ -71,7 +71,10 @@ def cell_id(court_idx: int, t_idx: int) -> str:
 
 
 def je_bunka_volna(page, court_idx: int, t_idx: int) -> bool:
-    """Buňka je volná, pokud na jejích souřadnicích není žádný div.event."""
+    """Buňka je volná, pokud na ŽÁDNÉM z několika vzorkovaných bodů uvnitř
+    (střed + 4 rohy s malým odsazením) není div.event. Vzorkování více
+    bodů místo jednoho středu snižuje riziko chybného zásahu do mezery
+    mezi sousedícími rezervačními bloky."""
     selector = f"#{cell_id(court_idx, t_idx)}"
 
     for pokus in range(3):
@@ -83,14 +86,26 @@ def je_bunka_volna(page, court_idx: int, t_idx: int) -> bool:
             box = locator.bounding_box()
             if box is None:
                 return False
-            cx = box["x"] + box["width"] / 2
-            cy = box["y"] + box["height"] / 2
+
+            okraj = 4  # px odsazení od hrany buňky, ať netrefíme sousední blok
+            x0, y0 = box["x"], box["y"]
+            w, h = box["width"], box["height"]
+            body = [
+                (x0 + w / 2, y0 + h / 2),                    # střed
+                (x0 + okraj, y0 + okraj),                    # levý horní roh
+                (x0 + w - okraj, y0 + okraj),                # pravý horní roh
+                (x0 + okraj, y0 + h - okraj),                # levý dolní roh
+                (x0 + w - okraj, y0 + h - okraj),             # pravý dolní roh
+            ]
+
             obsazeno = page.evaluate(
-                """([x, y]) => {
-                    const el = document.elementFromPoint(x, y);
-                    return el ? el.closest('.event') !== null : false;
+                """(body) => {
+                    return body.some(([x, y]) => {
+                        const el = document.elementFromPoint(x, y);
+                        return el ? el.closest('.event') !== null : false;
+                    });
                 }""",
-                [cx, cy],
+                body,
             )
             return not obsazeno
         except Exception as e:
@@ -233,6 +248,14 @@ def najdi_volne_terminy():
                                 f"kurt {kurt_idx + 1:02d}"
                             )
                             vysledky.append(popis)
+                            nazev_screenshotu = (
+                                f"nalezeno_{datum.strftime('%Y%m%d')}"
+                                f"_{hodina}h_kurt{kurt_idx + 1:02d}.png"
+                            )
+                            try:
+                                page.screenshot(path=nazev_screenshotu)
+                            except Exception as e:
+                                print(f"Nepodařilo se uložit ověřovací screenshot: {e}")
 
                 page.wait_for_timeout(800)  # šetrnější tempo vůči serveru
         except Exception:
