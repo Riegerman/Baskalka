@@ -130,19 +130,22 @@ def zotav_z_chyby_serveru(page) -> bool:
     return False
 
 
-def pockej_na_stabilni_rozvrh(page, max_cekani_ms=8000, interval_ms=400):
+def pockej_na_stabilni_rozvrh(page, max_cekani_ms=10000, interval_ms=500, potrebnych_stabilnich=3):
     """Rezervační bloky (div.event) se v tomto systému dokreslují
     asynchronně PO načtení samotné tabulky - pevná pauza proto nestačí
     a hrozí, že přečteme rozvrh dřív, než se rezervace stihnou objevit
-    (falešně 'volno'). Počkáme, dokud se počet vykreslených bloků
-    neustálí (přestane se měnit mezi dvěma měřeními), nebo do limitu."""
-    predchozi = -1
+    (falešně 'volno'). Při přepnutí data se navíc staré bloky nejdřív
+    smažou (počet klesne na 0) a teprve pak se dotáhnou a vykreslí nové
+    - kdybychom považovali za 'stabilní' už dvě stejná měření po sobě,
+    hrozí, že chytíme právě tuhle prázdnou mezeru a vyhodnotíme obsazený
+    rozvrh jako volný. Proto vyžadujeme stejný počet na N měření za sebou."""
+    historie = []
     uplynulo = 0
     while uplynulo < max_cekani_ms:
         aktualni = page.locator("#resContainer .event").count()
-        if aktualni == predchozi:
+        historie.append(aktualni)
+        if len(historie) >= potrebnych_stabilnich and len(set(historie[-potrebnych_stabilnich:])) == 1:
             return
-        predchozi = aktualni
         page.wait_for_timeout(interval_ms)
         uplynulo += interval_ms
 
