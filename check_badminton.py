@@ -73,23 +73,33 @@ def cell_id(court_idx: int, t_idx: int) -> str:
 def je_bunka_volna(page, court_idx: int, t_idx: int) -> bool:
     """Buňka je volná, pokud na jejích souřadnicích není žádný div.event."""
     selector = f"#{cell_id(court_idx, t_idx)}"
-    locator = page.locator(selector)
-    if locator.count() == 0:
-        return False
-    locator.scroll_into_view_if_needed()
-    box = locator.bounding_box()
-    if box is None:
-        return False
-    cx = box["x"] + box["width"] / 2
-    cy = box["y"] + box["height"] / 2
-    obsazeno = page.evaluate(
-        """([x, y]) => {
-            const el = document.elementFromPoint(x, y);
-            return el ? el.closest('.event') !== null : false;
-        }""",
-        [cx, cy],
-    )
-    return not obsazeno
+
+    for pokus in range(3):
+        try:
+            locator = page.locator(selector)
+            if locator.count() == 0:
+                return False
+            locator.scroll_into_view_if_needed()
+            box = locator.bounding_box()
+            if box is None:
+                return False
+            cx = box["x"] + box["width"] / 2
+            cy = box["y"] + box["height"] / 2
+            obsazeno = page.evaluate(
+                """([x, y]) => {
+                    const el = document.elementFromPoint(x, y);
+                    return el ? el.closest('.event') !== null : false;
+                }""",
+                [cx, cy],
+            )
+            return not obsazeno
+        except Exception as e:
+            if pokus < 2:
+                page.wait_for_timeout(500)
+                continue
+            print(f"Nepodařilo se přečíst buňku {selector} po 3 pokusech: {e}")
+            return False
+    return False
 
 
 def zotav_z_chyby_serveru(page) -> bool:
@@ -209,6 +219,8 @@ def najdi_volne_terminy():
                 else:
                     print(f"Nepodařilo se nastavit datum {datum.strftime('%d.%m.%Y')} po 3 pokusech, přeskakuji.")
                     continue
+
+                page.wait_for_timeout(1000)  # nech tabulku plně dokreslit
 
                 for hodina in ZAJIMAVE_SLOTY_HODINY:
                     t1 = time_index(hodina, 0)
