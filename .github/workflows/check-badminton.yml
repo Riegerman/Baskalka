@@ -1,0 +1,31 @@
+name: Kontrola volných termínů badmintonu
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalovat závislosti
+        run: |
+          pip install playwright requests
+          playwright install --with-deps chromium
+
+      - name: Spustit kontrolu
+        env:
+          RESERVATION_USERNAME: ${{ secrets.RESERVATION_USERNAME }}
+          RESERVATION_PASSWORD: ${{ secrets.RESERVATION_PASSWORD }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: python check_badminton.py
