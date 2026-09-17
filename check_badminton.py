@@ -24,7 +24,7 @@ Známá omezení / co může být potřeba doladit:
 import os
 import sys
 from datetime import datetime, timedelta
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import requests
 
 # ---------------------------------------------------------------------------
@@ -90,6 +90,19 @@ def je_bunka_volna(page, court_idx: int, t_idx: int) -> bool:
         [cx, cy],
     )
     return not obsazeno
+
+
+def zotav_z_chyby_serveru(page) -> bool:
+    """Pokud se objevil dialog 'Nastala chyba' (např. 500 Internal Server
+    Error), klikne na 'Obnovit rozvrh' a vrátí True. Jinak vrátí False."""
+    dialog = page.locator("text='Nastala chyba'")
+    if dialog.count() > 0 and dialog.first.is_visible():
+        print("Zachycena chybová hláška serveru, klikám na 'Obnovit rozvrh'...")
+        page.click("text='Obnovit rozvrh'")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1500)
+        return True
+    return False
 
 
 def nastav_zobrazeni_vertikalni(page):
@@ -183,7 +196,19 @@ def najdi_volne_terminy():
                     continue
 
                 print(f"[{datetime.now()}] Kontroluji {datum.strftime('%A %d.%m.%Y')}...")
-                nastav_datum(page, datum)
+
+                for pokus in range(3):
+                    try:
+                        nastav_datum(page, datum)
+                        break
+                    except PlaywrightTimeoutError:
+                        if zotav_z_chyby_serveru(page):
+                            print(f"Zkouším znovu nastavit datum (pokus {pokus + 2}/3)...")
+                            continue
+                        raise
+                else:
+                    print(f"Nepodařilo se nastavit datum {datum.strftime('%d.%m.%Y')} po 3 pokusech, přeskakuji.")
+                    continue
 
                 for hodina in ZAJIMAVE_SLOTY_HODINY:
                     t1 = time_index(hodina, 0)
@@ -196,6 +221,8 @@ def najdi_volne_terminy():
                                 f"kurt {kurt_idx + 1:02d}"
                             )
                             vysledky.append(popis)
+
+                page.wait_for_timeout(800)  # šetrnější tempo vůči serveru
         except Exception:
             # Při jakékoliv chybě ulož screenshot a HTML aktuální stránky,
             # ať víme, co server doopravdy vrátil (debug.png / debug.html
