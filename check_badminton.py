@@ -130,6 +130,23 @@ def zotav_z_chyby_serveru(page) -> bool:
     return False
 
 
+def pockej_na_stabilni_rozvrh(page, max_cekani_ms=8000, interval_ms=400):
+    """Rezervační bloky (div.event) se v tomto systému dokreslují
+    asynchronně PO načtení samotné tabulky - pevná pauza proto nestačí
+    a hrozí, že přečteme rozvrh dřív, než se rezervace stihnou objevit
+    (falešně 'volno'). Počkáme, dokud se počet vykreslených bloků
+    neustálí (přestane se měnit mezi dvěma měřeními), nebo do limitu."""
+    predchozi = -1
+    uplynulo = 0
+    while uplynulo < max_cekani_ms:
+        aktualni = page.locator("#resContainer .event").count()
+        if aktualni == predchozi:
+            return
+        predchozi = aktualni
+        page.wait_for_timeout(interval_ms)
+        uplynulo += interval_ms
+
+
 def nastav_zobrazeni_vertikalni(page):
     page.select_option(
         "#scheduleNavigForm\\:view_filter_menu",
@@ -214,6 +231,7 @@ def najdi_volne_terminy():
             page.wait_for_load_state("networkidle")
 
             nastav_zobrazeni_vertikalni(page)
+        pockej_na_stabilni_rozvrh(page)
 
             for posun in range(HORIZONT_DNI):
                 datum = dnes + timedelta(days=posun)
@@ -235,7 +253,8 @@ def najdi_volne_terminy():
                     print(f"Nepodařilo se nastavit datum {datum.strftime('%d.%m.%Y')} po 3 pokusech, přeskakuji.")
                     continue
 
-                page.wait_for_timeout(1000)  # nech tabulku plně dokreslit
+                page.wait_for_timeout(500)
+                pockej_na_stabilni_rozvrh(page)
 
                 for hodina in ZAJIMAVE_SLOTY_HODINY:
                     t1 = time_index(hodina, 0)
