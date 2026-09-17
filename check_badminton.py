@@ -231,7 +231,7 @@ def najdi_volne_terminy():
             page.wait_for_load_state("networkidle")
 
             nastav_zobrazeni_vertikalni(page)
-        pockej_na_stabilni_rozvrh(page)
+            pockej_na_stabilni_rozvrh(page)
 
             for posun in range(HORIZONT_DNI):
                 datum = dnes + timedelta(days=posun)
