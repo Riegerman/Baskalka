@@ -132,9 +132,25 @@ def nastav_datum(page, cilove_datum: datetime):
             page.click(f"{SCHEDULE_CALENDAR_SELECTOR} >> text='<'")
         page.wait_for_timeout(300)
 
-    page.click(
-        f"{SCHEDULE_CALENDAR_SELECTOR} td:not(.rich-calendar-boundary-dates-cell) "
-        f"a:text-is('{cilove_datum.day}')"
+    page.evaluate(
+        """([selector, den]) => {
+            const container = document.querySelector(selector);
+            if (!container) return false;
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
+            let target = null;
+            let node;
+            while ((node = walker.nextNode())) {
+                if (node.children.length === 0 && node.textContent.trim() === den) {
+                    target = node;
+                }
+            }
+            if (target) {
+                target.click();
+                return true;
+            }
+            return false;
+        }""",
+        [SCHEDULE_CALENDAR_SELECTOR, str(cilove_datum.day)],
     )
     page.wait_for_load_state("networkidle")
 
