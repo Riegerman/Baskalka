@@ -142,38 +142,55 @@ def najdi_volne_terminy():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        page = browser.new_page(user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ))
 
-        print(f"[{datetime.now()}] Přihlašuji se...")
-        page.goto(LOGIN_URL, wait_until="networkidle")
-        page.fill("#username", USERNAME)
-        page.fill("#password", PASSWORD)
-        page.click("input[value='Přihlásit']")
-        page.wait_for_load_state("networkidle")
+        try:
+            print(f"[{datetime.now()}] Přihlašuji se...")
+            page.goto(LOGIN_URL, wait_until="load", timeout=60000)
+            page.wait_for_selector("#username", state="visible", timeout=20000)
+            page.fill("#username", USERNAME)
+            page.fill("#password", PASSWORD)
+            page.click("input[value='Přihlásit']")
+            page.wait_for_load_state("networkidle")
 
-        nastav_zobrazeni_vertikalni(page)
+            nastav_zobrazeni_vertikalni(page)
 
-        for posun in range(HORIZONT_DNI):
-            datum = dnes + timedelta(days=posun)
-            if datum.weekday() not in ZAJIMAVE_DNY_WEEKDAY:
-                continue
+            for posun in range(HORIZONT_DNI):
+                datum = dnes + timedelta(days=posun)
+                if datum.weekday() not in ZAJIMAVE_DNY_WEEKDAY:
+                    continue
 
-            print(f"[{datetime.now()}] Kontroluji {datum.strftime('%A %d.%m.%Y')}...")
-            nastav_datum(page, datum)
+                print(f"[{datetime.now()}] Kontroluji {datum.strftime('%A %d.%m.%Y')}...")
+                nastav_datum(page, datum)
 
-            for hodina in ZAJIMAVE_SLOTY_HODINY:
-                t1 = time_index(hodina, 0)
-                t2 = time_index(hodina, 30)
+                for hodina in ZAJIMAVE_SLOTY_HODINY:
+                    t1 = time_index(hodina, 0)
+                    t2 = time_index(hodina, 30)
 
-                for kurt_idx in range(POCET_KURTU):
-                    if je_bunka_volna(page, kurt_idx, t1) and je_bunka_volna(page, kurt_idx, t2):
-                        popis = (
-                            f"{datum.strftime('%a %d.%m.')} {hodina}:00-{hodina + 1}:00, "
-                            f"kurt {kurt_idx + 1:02d}"
-                        )
-                        vysledky.append(popis)
-
-        browser.close()
+                    for kurt_idx in range(POCET_KURTU):
+                        if je_bunka_volna(page, kurt_idx, t1) and je_bunka_volna(page, kurt_idx, t2):
+                            popis = (
+                                f"{datum.strftime('%a %d.%m.')} {hodina}:00-{hodina + 1}:00, "
+                                f"kurt {kurt_idx + 1:02d}"
+                            )
+                            vysledky.append(popis)
+        except Exception:
+            # Při jakékoliv chybě ulož screenshot a HTML aktuální stránky,
+            # ať víme, co server doopravdy vrátil (debug.png / debug.html
+            # se nahrají jako artifact v GitHub Actions).
+            try:
+                page.screenshot(path="debug.png", full_page=True)
+                with open("debug.html", "w", encoding="utf-8") as f:
+                    f.write(page.content())
+                print("Uložen debug.png a debug.html pro diagnostiku.")
+            except Exception as debug_e:
+                print(f"Nepodařilo se uložit debug soubory: {debug_e}")
+            raise
+        finally:
+            browser.close()
 
     return vysledky
 

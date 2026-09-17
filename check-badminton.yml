@@ -38,3 +38,13 @@ jobs:
           CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
         run: python check_badminton.py
+
+      - name: Nahrát debug soubory (jen při chybě)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-files
+          path: |
+            debug.png
+            debug.html
+          retention-days: 3
