@@ -100,8 +100,11 @@ def nastav_zobrazeni_vertikalni(page):
     page.wait_for_load_state("networkidle")
 
 
+SCHEDULE_CALENDAR_SELECTOR = "#scheduleNavigForm\\:schedule_calendar"
+
+
 def precti_zobrazeny_mesic_rok(page):
-    text = page.locator(".rich-calendar-exterior").inner_text().lower()
+    text = page.locator(SCHEDULE_CALENDAR_SELECTOR).inner_text().lower()
     for i, nazev in enumerate(CZ_MESICE):
         if nazev in text:
             for cast in text.replace(",", " ").split():
@@ -117,20 +120,20 @@ def nastav_datum(page, cilove_datum: datetime):
         return  # už jsme na správném datu
 
     page.click("#scheduleNavigForm\\:schedule_calendarPopupButton")
-    page.wait_for_selector(".rich-calendar-exterior", state="visible")
+    page.wait_for_selector(SCHEDULE_CALENDAR_SELECTOR, state="visible")
 
     for _ in range(12):  # pojistka proti nekonečné smyčce
         rok, mesic = precti_zobrazeny_mesic_rok(page)
         if (rok, mesic) == (cilove_datum.year, cilove_datum.month):
             break
         if (rok, mesic) < (cilove_datum.year, cilove_datum.month):
-            page.click(".rich-calendar-exterior >> text='>'")
+            page.click(f"{SCHEDULE_CALENDAR_SELECTOR} >> text='>'")
         else:
-            page.click(".rich-calendar-exterior >> text='<'")
+            page.click(f"{SCHEDULE_CALENDAR_SELECTOR} >> text='<'")
         page.wait_for_timeout(300)
 
     page.click(
-        f".rich-calendar-exterior td:not(.rich-calendar-boundary-dates-cell) "
+        f"{SCHEDULE_CALENDAR_SELECTOR} td:not(.rich-calendar-boundary-dates-cell) "
         f"a:text-is('{cilove_datum.day}')"
     )
     page.wait_for_load_state("networkidle")
