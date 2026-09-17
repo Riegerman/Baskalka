@@ -299,6 +299,12 @@ def najdi_volne_terminy():
 
 
 def main():
+    test_zprava = os.environ.get("TEST_WHATSAPP_MESSAGE", "").strip()
+    if test_zprava:
+        print(f"[{datetime.now()}] Testovací režim - posílám zprávu bez kontroly rozvrhu.")
+        poslat_whatsapp(test_zprava)
+        return
+
     try:
         nalezene = najdi_volne_terminy()
     except Exception as e:
