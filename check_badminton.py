@@ -2,155 +2,191 @@
 Sledovač volných termínů badmintonu na baskalka.e-rezervace.cz
 ================================================================
 
-Jak to funguje:
-1. Playwright otevře headless prohlížeč a přihlásí se pod tvým účtem.
-2. Přejde na stránku s rezervacemi badmintonu.
-3. Zkontroluje, jestli je v tobě zajímavém časovém okně volný kurt.
-4. Pokud ano, pošle ti zprávu na WhatsApp přes CallMeBot.
+Co dělá:
+1. Přihlásí se přes Playwright (headless prohlížeč).
+2. Přepne zobrazení rozvrhu na "Jeden den (vertikální)" - klasická
+   tabulka s kurty jako sloupci a časy jako řádky.
+3. Projde nejbližších HORIZONT_DNI dní, vybere jen úterky a středy.
+4. Pro každý zajímavý den zkontroluje sloty 17-18, 18-19, 19-20 na
+   všech kurtech - buňka je "volná", pokud na jejích souřadnicích
+   NENÍ žádný barevný blok rezervace (div.event).
+5. Pokud najde cokoliv volného, pošle souhrn na WhatsApp přes CallMeBot.
 
-DŮLEŽITÉ - musíš doplnit:
-- Přihlašovací údaje (jako GitHub Secrets, viz. níže, NE natvrdo do kódu!)
-- CSS/XPath selektory označené jako TODO (liší se web od webu, potřebuješ
-  se podívat do Dev Tools na konkrétní stránce - návod je v komentářích).
-
-Jak najít selektory (Dev Tools návod):
-1. Otevři http://baskalka.e-rezervace.cz/Branch/pages/WebLogin.faces v Chrome/Firefoxu.
-2. Klikni pravým tlačítkem na přihlašovací pole -> "Prozkoumat" (Inspect).
-3. V zobrazeném HTML uvidíš atribut `id="..."` nebo `name="..."` daného inputu.
-   To je selektor, který potřebuješ.
-4. Totéž zopakuj pro heslo, přihlašovací tlačítko, a po přihlášení pro
-   kalendář/tabulku volných termínů badmintonu.
+Známá omezení / co může být potřeba doladit:
+- Klikání v kalendářovém popupu (funkce `nastav_datum`) předpokládá
+  standardní RichFaces kalendář s tlačítky '<' a '>' pro měsíc.
+  Pokud tahle část selže, pošli mi chybovou hlášku z GitHub Actions
+  logu (Actions -> běh -> krok 'Spustit kontrolu') a doladíme to.
+- Předpokládá se 13 kurtů (kurt 01-13). Pokud jich je jinak, uprav
+  POCET_KURTU.
 """
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 import requests
 
 # ---------------------------------------------------------------------------
-# KONFIGURACE - načítá se z proměnných prostředí (GitHub Secrets)
+# KONFIGURACE - z proměnných prostředí (GitHub Secrets)
 # ---------------------------------------------------------------------------
 USERNAME = os.environ["RESERVATION_USERNAME"]
 PASSWORD = os.environ["RESERVATION_PASSWORD"]
-CALLMEBOT_PHONE = os.environ["CALLMEBOT_PHONE"]       # tvé číslo, format +420...
-CALLMEBOT_APIKEY = os.environ["CALLMEBOT_APIKEY"]     # dostaneš při aktivaci CallMeBot
+CALLMEBOT_PHONE = os.environ["CALLMEBOT_PHONE"]
+CALLMEBOT_APIKEY = os.environ["CALLMEBOT_APIKEY"]
 
 LOGIN_URL = "http://baskalka.e-rezervace.cz/Branch/pages/WebLogin.faces"
 
-# Dny a hodinové sloty, které tě zajímají.
-# Sloty jsou (začátek, konec) v 24h formátu - musí odpovídat formátu,
-# jakým rezervační systém sloty zobrazuje (např. "17:00" nebo "17:00-18:00").
-ZAJIMAVE_DNY = ["Tuesday", "Wednesday"]
-ZAJIMAVE_SLOTY = [
-    ("17:00", "18:00"),
-    ("18:00", "19:00"),
-    ("19:00", "20:00"),
+# Dny v týdnu (Python: pondělí=0, úterý=1, středa=2, ...)
+ZAJIMAVE_DNY_WEEKDAY = [1, 2]  # úterý, středa
+
+# Hodiny začátku zajímavých slotů (17-18, 18-19, 19-20)
+ZAJIMAVE_SLOTY_HODINY = [17, 18, 19]
+
+HORIZONT_DNI = 14       # kolik dní dopředu kontrolovat
+POCET_KURTU = 13        # kurt 01 až kurt 13
+
+CZ_MESICE = [
+    "leden", "únor", "březen", "duben", "květen", "červen",
+    "červenec", "srpen", "září", "říjen", "listopad", "prosinec",
 ]
 
 
 def poslat_whatsapp(zprava: str):
-    """Odešle zprávu přes CallMeBot API."""
     url = "https://api.callmebot.com/whatsapp.php"
-    params = {
-        "phone": CALLMEBOT_PHONE,
-        "text": zprava,
-        "apikey": CALLMEBOT_APIKEY,
-    }
+    params = {"phone": CALLMEBOT_PHONE, "text": zprava, "apikey": CALLMEBOT_APIKEY}
     r = requests.get(url, params=params, timeout=15)
     print(f"CallMeBot odpověď: {r.status_code} {r.text[:200]}")
 
 
-def je_zajimavy_slot(text: str) -> bool:
-    """
-    Vrátí True, pokud text volného slotu (např. 'Úterý 17:00-18:00' nebo
-    'Tuesday 17:00') odpovídá dni a hodině, které tě zajímají.
+def time_index(hour: int, minute: int = 0) -> int:
+    """6:30 = index 0, každých 30 minut index +1 (viz id buněk sched_0_i_X_Y)."""
+    minuty_od_pulnoci = hour * 60 + minute
+    baze = 6 * 60 + 30
+    return (minuty_od_pulnoci - baze) // 30
 
-    TODO: Uprav podle skutečného formátu textu, jaký rezervační systém
-    u volných slotů zobrazuje (den může být česky/anglicky/zkratkou,
-    čas může mít jiný oddělovač apod.). Nejjednodušší je vypsat si
-    `print(text)` pro pár slotů a podle toho parsování doladit.
-    """
-    text_lower = text.lower()
 
-    # Mapování anglických názvů dnů na české varianty, které se mohou
-    # v systému objevit - dopl' podle skutečnosti.
-    dny_cz = {
-        "Monday": ["pondělí", "po"],
-        "Tuesday": ["úterý", "ut"],
-        "Wednesday": ["středa", "st"],
-        "Thursday": ["čtvrtek", "čt"],
-        "Friday": ["pátek", "pá"],
-    }
+def cell_id(court_idx: int, t_idx: int) -> str:
+    return f"sched_0_i_{court_idx}_{t_idx}"
 
-    den_sedi = any(
-        any(varianta in text_lower for varianta in dny_cz.get(den, [den.lower()]))
-        for den in ZAJIMAVE_DNY
-    )
-    if not den_sedi:
+
+def je_bunka_volna(page, court_idx: int, t_idx: int) -> bool:
+    """Buňka je volná, pokud na jejích souřadnicích není žádný div.event."""
+    selector = f"#{cell_id(court_idx, t_idx)}"
+    locator = page.locator(selector)
+    if locator.count() == 0:
         return False
-
-    cas_sedi = any(
-        cas_od in text or cas_do in text
-        for cas_od, cas_do in ZAJIMAVE_SLOTY
+    locator.scroll_into_view_if_needed()
+    box = locator.bounding_box()
+    if box is None:
+        return False
+    cx = box["x"] + box["width"] / 2
+    cy = box["y"] + box["height"] / 2
+    obsazeno = page.evaluate(
+        """([x, y]) => {
+            const el = document.elementFromPoint(x, y);
+            return el ? el.closest('.event') !== null : false;
+        }""",
+        [cx, cy],
     )
-    return cas_sedi
+    return not obsazeno
 
 
-def zkontroluj_terminy():
+def nastav_zobrazeni_vertikalni(page):
+    page.select_option(
+        "#scheduleNavigForm\\:view_filter_menu",
+        label="Jeden den (vertikální)",
+    )
+    page.wait_for_load_state("networkidle")
+
+
+def precti_zobrazeny_mesic_rok(page):
+    text = page.locator(".rich-calendar-exterior").inner_text().lower()
+    for i, nazev in enumerate(CZ_MESICE):
+        if nazev in text:
+            for cast in text.replace(",", " ").split():
+                if cast.isdigit() and len(cast) == 4:
+                    return int(cast), i + 1
+    raise RuntimeError(f"Nepodařilo se rozpoznat měsíc/rok z kalendáře: {text}")
+
+
+def nastav_datum(page, cilove_datum: datetime):
+    cilovy_text = f"{cilove_datum.day}.{cilove_datum.month}.{cilove_datum.year}"
+    aktualni_hodnota = page.input_value("#scheduleNavigForm\\:schedule_calendarInputDate")
+    if aktualni_hodnota == cilovy_text:
+        return  # už jsme na správném datu
+
+    page.click("#scheduleNavigForm\\:schedule_calendarPopupButton")
+    page.wait_for_selector(".rich-calendar-exterior", state="visible")
+
+    for _ in range(12):  # pojistka proti nekonečné smyčce
+        rok, mesic = precti_zobrazeny_mesic_rok(page)
+        if (rok, mesic) == (cilove_datum.year, cilove_datum.month):
+            break
+        if (rok, mesic) < (cilove_datum.year, cilove_datum.month):
+            page.click(".rich-calendar-exterior >> text='>'")
+        else:
+            page.click(".rich-calendar-exterior >> text='<'")
+        page.wait_for_timeout(300)
+
+    page.click(
+        f".rich-calendar-exterior td:not(.rich-calendar-boundary-dates-cell) "
+        f"a:text-is('{cilove_datum.day}')"
+    )
+    page.wait_for_load_state("networkidle")
+
+
+def najdi_volne_terminy():
+    dnes = datetime.now()
+    vysledky = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        print(f"[{datetime.now()}] Otevírám přihlašovací stránku...")
+        print(f"[{datetime.now()}] Přihlašuji se...")
         page.goto(LOGIN_URL, wait_until="networkidle")
-
-        # -------------------------------------------------------------
-        # TODO: Doplň skutečné selektory z Dev Tools
-        # -------------------------------------------------------------
-        # Příklad - uprav podle skutečného id/name inputů na stránce:
-        page.fill("#username", USERNAME)          # TODO: uprav selektor
-        page.fill("#password", PASSWORD)           # TODO: uprav selektor
-        page.click("#loginButton")                 # TODO: uprav selektor
-
+        page.fill("#username", USERNAME)
+        page.fill("#password", PASSWORD)
+        page.click("input[value='Přihlásit']")
         page.wait_for_load_state("networkidle")
-        print(f"[{datetime.now()}] Přihlášení odesláno, čekám na načtení...")
 
-        # -------------------------------------------------------------
-        # TODO: Přejdi na stránku s rezervacemi badmintonu.
-        # Buď je to přímý odkaz (page.goto("URL_BADMINTONU")),
-        # nebo je potřeba proklikat menu (page.click("text=Badminton")).
-        # -------------------------------------------------------------
-        # page.click("text=Badminton")  # TODO: uprav podle skutečnosti
-        # page.wait_for_load_state("networkidle")
+        nastav_zobrazeni_vertikalni(page)
 
-        # -------------------------------------------------------------
-        # TODO: Najdi volné termíny na stránce.
-        # Rezervační systémy typicky označují volné sloty barvou/třídou
-        # (např. class="free" vs class="occupied"). V Dev Tools zkontroluj,
-        # jaký CSS selektor volné sloty odlišuje.
-        # -------------------------------------------------------------
-        volne_sloty = page.query_selector_all(".free-slot")  # TODO: uprav selektor
+        for posun in range(HORIZONT_DNI):
+            datum = dnes + timedelta(days=posun)
+            if datum.weekday() not in ZAJIMAVE_DNY_WEEKDAY:
+                continue
 
-        nalezene = []
-        for slot in volne_sloty:
-            text = slot.inner_text().strip()
-            if je_zajimavy_slot(text):
-                nalezene.append(text)
+            print(f"[{datetime.now()}] Kontroluji {datum.strftime('%A %d.%m.%Y')}...")
+            nastav_datum(page, datum)
+
+            for hodina in ZAJIMAVE_SLOTY_HODINY:
+                t1 = time_index(hodina, 0)
+                t2 = time_index(hodina, 30)
+
+                for kurt_idx in range(POCET_KURTU):
+                    if je_bunka_volna(page, kurt_idx, t1) and je_bunka_volna(page, kurt_idx, t2):
+                        popis = (
+                            f"{datum.strftime('%a %d.%m.')} {hodina}:00-{hodina + 1}:00, "
+                            f"kurt {kurt_idx + 1:02d}"
+                        )
+                        vysledky.append(popis)
 
         browser.close()
-        return nalezene
+
+    return vysledky
 
 
 def main():
     try:
-        nalezene = zkontroluj_terminy()
+        nalezene = najdi_volne_terminy()
     except Exception as e:
         print(f"Chyba při kontrole: {e}")
         sys.exit(1)
 
     if nalezene:
-        zprava = "🏸 Volný termín na badminton!\n" + "\n".join(nalezene)
+        zprava = "🏸 Volné termíny na badminton!\n" + "\n".join(nalezene)
         print(zprava)
         poslat_whatsapp(zprava)
     else:
