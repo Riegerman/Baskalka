@@ -38,7 +38,7 @@ CALLMEBOT_APIKEY = os.environ["CALLMEBOT_APIKEY"]
 LOGIN_URL = "http://baskalka.e-rezervace.cz/Branch/pages/WebLogin.faces"
 
 # Dny v týdnu (Python: pondělí=0, úterý=1, středa=2, ...)
-ZAJIMAVE_DNY_WEEKDAY = [1, 2]  # úterý, středa
+ZAJIMAVE_DNY_WEEKDAY = [0, 1, 2]  # pondělí, úterý, středa
 
 # Hodiny začátku zajímavých slotů (17-18, 18-19, 19-20)
 ZAJIMAVE_SLOTY_HODINY = [17, 18, 19]
